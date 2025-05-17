@@ -445,67 +445,49 @@ class ZimManageViewModel @Inject constructor(
     downloads: io.reactivex.rxjava3.core.Flowable<List<DownloadModel>>,
     library: Flowable<LibraryNetworkEntity>,
     languages: io.reactivex.rxjava3.core.Flowable<List<Language>>
-  ) {
-    viewModelScope.launch {
-      val requestFilteringFlow = flow {
-        emit("")
-        requestFiltering
-          .asFlowable()
-          .asFlow()
-          .onEach { libraryListIsRefreshing.postValue(true) }
-          .collect { emit(it) }
+  ) = Flowable.combineLatest(
+    booksFromDao,
+    downloads,
+    languages.filter(List<Language>::isNotEmpty),
+    library,
+    Flowable.merge(
+      Flowable.just(""),
+      requestFiltering
+        .doOnNext { libraryListIsRefreshing.postValue(true) }
+        .debounce(500, MILLISECONDS)
+        .observeOn(Schedulers.io())
+    ),
+    fat32Checker.fileSystemStates.asFlowable(),
+    Function6(::combineLibrarySources)
+  )
+    .doOnNext { libraryListIsRefreshing.postValue(false) }
+    .doOnError { throwable ->
+      if (throwable is OutOfMemoryError) {
+        Log.e("ZimManageViewModel", "Error----${throwable.printStackTrace()}")
       }
-
-      booksFromDao.asFlow()
-        .combine(downloads.asFlow()) { books, downloadsList -> Pair(books, downloadsList) }
-        .combine(languages.asFlow().filter(List<Language>::isNotEmpty)) { (books, downloads), langs -> Triple(books, downloads, langs) }
-        .combine(library.asFlow()) { (books, downloads, langs), lib -> arrayOf(books, downloads, langs, lib) }
-        .combine(requestFilteringFlow) { arr, filter -> arr + filter }
-        .combine(fat32Checker.fileSystemStates.asFlowable().asFlow()) { arr, state -> arr + state }
-        .map { arr -> 
-          @Suppress("UNCHECKED_CAST")
-          combineLibrarySources(
-            arr[0] as List<BookOnDisk>,
-            arr[1] as List<DownloadModel>,
-            arr[2] as List<Language>,
-            arr[3] as LibraryNetworkEntity,
-            arr[4] as String,
-            arr[5] as FileSystemState
-          )
-        }
-        .onEach { libraryListIsRefreshing.postValue(false) }
-        .catch { throwable ->
-          if (throwable is OutOfMemoryError) {
-            Log.e("ZimManageViewModel", "Error----${throwable.printStackTrace()}")
-          }
-        }
-        .collect { items ->
-          libraryItems.postValue(items)
-        }
     }
-  }
+    .subscribeOn(Schedulers.io())
+    .subscribe(
+      libraryItems::postValue,
+      Throwable::printStackTrace
+    )
 
   private fun updateLanguagesInDao(
     library: Flowable<LibraryNetworkEntity>,
     languages: io.reactivex.rxjava3.core.Flowable<List<Language>>
-  ) {
-    viewModelScope.launch {
-      library
-        .asFlow()
-        .map(LibraryNetworkEntity::book)
-        .combine(languages.asFlow()) { books, langs ->
-          combineToLanguageList(books, langs)
-        }
-        .map { it.sortedBy(Language::language) }
-        .filter(List<Language>::isNotEmpty)
-        .catch { throwable ->
-          throwable.printStackTrace()
-        }
-        .collect { languageList ->
-          languageDao.insert(languageList)
-        }
-    }
-  }
+  ) = library
+    .subscribeOn(Schedulers.io())
+    .map(LibraryNetworkEntity::book)
+    .withLatestFrom(
+      languages,
+      BiFunction(::combineToLanguageList)
+    )
+    .map { it.sortedBy(Language::language) }
+    .filter(List<Language>::isNotEmpty)
+    .subscribe(
+      languageDao::insert,
+      Throwable::printStackTrace
+    )
 
   private fun combineToLanguageList(
     booksFromNetwork: List<Book>,
