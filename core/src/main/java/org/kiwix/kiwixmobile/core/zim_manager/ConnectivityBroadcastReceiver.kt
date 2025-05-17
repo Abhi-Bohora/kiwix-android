@@ -21,8 +21,9 @@ package org.kiwix.kiwixmobile.core.zim_manager
 import android.content.Context
 import android.content.Intent
 import android.net.ConnectivityManager
-import io.reactivex.Flowable
-import io.reactivex.processors.BehaviorProcessor
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import org.kiwix.kiwixmobile.core.base.BaseBroadcastReceiver
 import org.kiwix.kiwixmobile.core.networkState
 import javax.inject.Inject
@@ -34,17 +35,17 @@ class ConnectivityBroadcastReceiver @Inject constructor(
     @Suppress("DEPRECATION")
     override val action: String = ConnectivityManager.CONNECTIVITY_ACTION
 
-    private val _networkStates = BehaviorProcessor.createDefault(connectivityManager.networkState)
-    val networkStates: Flowable<NetworkState> = _networkStates
+    private val _networkStates = MutableStateFlow(connectivityManager.networkState)
+    val networkStates: StateFlow<NetworkState> = _networkStates.asStateFlow()
 
     override fun onIntentWithActionReceived(
       context: Context,
       intent: Intent
     ) {
-      _networkStates.onNext(connectivityManager.networkState)
+      _networkStates.value = connectivityManager.networkState
     }
 
     fun stopNetworkState() {
-      _networkStates.onComplete()
+      // No need to do anything here as StateFlow doesn't have a completion concept
     }
   }
